@@ -1,8 +1,7 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import Enum
-from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EventType(str, Enum):
@@ -16,12 +15,9 @@ class ProjectCreate(BaseModel):
 
 
 class Project(ProjectCreate):
+    model_config = ConfigDict(from_attributes=True)
     id: str
     created_at: datetime
-
-    @classmethod
-    def from_create(cls, data: ProjectCreate) -> "Project":
-        return cls(id=str(uuid4()), created_at=datetime.now(UTC), **data.model_dump())
 
 
 class ServiceCreate(BaseModel):
@@ -30,13 +26,11 @@ class ServiceCreate(BaseModel):
 
 
 class Service(ServiceCreate):
+    model_config = ConfigDict(from_attributes=True)
     id: str
     project_id: str
     created_at: datetime
 
-    @classmethod
-    def from_create(cls, project_id: str, data: ServiceCreate) -> "Service":
-        return cls(id=str(uuid4()), project_id=project_id, created_at=datetime.now(UTC), **data.model_dump())
 
 
 class TelemetryEventCreate(BaseModel):
@@ -49,12 +43,10 @@ class TelemetryEventCreate(BaseModel):
 
 
 class TelemetryEvent(TelemetryEventCreate):
+    model_config = ConfigDict(from_attributes=True)
     id: str
     timestamp: datetime
 
-    @classmethod
-    def from_create(cls, data: TelemetryEventCreate) -> "TelemetryEvent":
-        return cls(id=str(uuid4()), timestamp=datetime.now(UTC), **data.model_dump())
 
 
 class ProjectSummary(BaseModel):

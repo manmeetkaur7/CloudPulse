@@ -1,10 +1,10 @@
 # CloudPulse
 
-CloudPulse is an application observability platform in its early foundation stage. It currently lets you create monitored projects and services, submit telemetry events, and view calculated project metrics.
+CloudPulse is an application observability platform in its early foundation stage. It lets you create monitored projects and services, submit telemetry events, and view calculated project metrics backed by PostgreSQL.
 
 ## Current status
 
-Implemented: a Next.js dashboard, FastAPI health and project APIs, environment-configured CORS, in-memory projects/services/telemetry, and summary metrics calculated from submitted events.
+Implemented: a Next.js dashboard, FastAPI health and project APIs, PostgreSQL persistence through SQLAlchemy, Alembic migrations, environment-configured CORS, and summary metrics calculated from submitted events.
 
 Planned: persistent storage, richer metrics and dashboards, incidents, alerts, OpenTelemetry integration, event processing, and deployment infrastructure.
 
@@ -22,7 +22,7 @@ Planned: persistent storage, richer metrics and dashboards, incidents, alerts, O
 - View a selected project's request count, average request latency, error rate, and deterministic health status.
 - Use the dashboard's Development demo controls to submit real test request or error events to its selected project's first service.
 
-The current repository is an in-memory development foundation: projects, services, and telemetry are lost whenever the backend restarts.
+Projects, services, and telemetry are stored in PostgreSQL and survive backend restarts once migrations have been applied.
 
 ### Summary metric rules
 
@@ -33,18 +33,26 @@ The current repository is an in-memory development foundation: projects, service
 
 ## Local development
 
-1. Copy `.env.example` to `.env.local` at the repository root, or create `frontend/.env.local` with `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`. Do not commit either file.
-2. In one terminal, create and activate a Python virtual environment, install API dependencies, then run the API:
+1. Install and start PostgreSQL, then create a database and local user. See [PostgreSQL setup](#postgresql-setup).
+2. Configure the current PowerShell session with a database URL. Do not commit this value:
+
+   ```powershell
+   $env:DATABASE_URL = "postgresql+psycopg://cloudpulse:cloudpulse@localhost:5432/cloudpulse"
+   ```
+
+3. Create `frontend/.env.local` with `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`. Do not commit it.
+4. In one terminal, create and activate a Python virtual environment, install API dependencies, apply migrations, then run the API:
 
    ```powershell
    cd backend
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
    pip install -r requirements.txt
+   alembic upgrade head
    uvicorn app.main:app --reload
    ```
 
-3. In another terminal, install and run the frontend:
+5. In another terminal, install and run the frontend:
 
    ```powershell
    cd frontend
@@ -54,10 +62,45 @@ The current repository is an in-memory development foundation: projects, service
 
 Open `http://localhost:3000`. The dashboard will show API Connected while the backend health endpoint is available.
 
+## PostgreSQL setup
+
+On Windows, first check whether PostgreSQL is installed:
+
+```powershell
+psql --version
+Get-Service -Name postgresql* -ErrorAction SilentlyContinue
+```
+
+If it is not installed, install PostgreSQL using the official Windows installer from [postgresql.org/download/windows](https://www.postgresql.org/download/windows/). During installation, retain the default port `5432` and set a password for the `postgres` administrator account.
+
+After the service is running, create the local application role and database:
+
+```powershell
+psql -U postgres -h localhost -d postgres
+```
+
+Then run this SQL at the `psql` prompt, replacing the password before use:
+
+```sql
+CREATE USER cloudpulse WITH PASSWORD 'choose-a-local-password';
+CREATE DATABASE cloudpulse OWNER cloudpulse;
+```
+
+Update the PowerShell `DATABASE_URL` value to use the password you chose, then run `alembic upgrade head` from `backend/`.
+
+## Persistence verification
+
+1. Start PostgreSQL and set `DATABASE_URL` in the backend terminal.
+2. Run `alembic upgrade head` and start the API.
+3. Create a project, service, and telemetry event in the dashboard.
+4. Stop the API with `Ctrl+C`, restart it with the same `DATABASE_URL`, and reload the dashboard.
+5. Confirm the project, service, telemetry, and summary still appear.
+
 ## Validation
 
 ```powershell
 cd backend; pytest
+cd backend; alembic upgrade head
 cd frontend; npm run lint; npm run build
 git diff --check
 ```

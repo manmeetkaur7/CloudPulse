@@ -1,13 +1,22 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.main import create_app
-from app.storage import InMemoryRepository
+from app.db_models import Base
 
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(create_app(InMemoryRepository()))
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    test_session_factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
+    with TestClient(create_app(test_session_factory)) as test_client:
+        yield test_client
+    Base.metadata.drop_all(engine)
+    engine.dispose()
 
 
 def create_project(client: TestClient, name: str = "StreamSphere") -> dict[str, object]:
@@ -117,3 +126,16 @@ def test_empty_summary_is_healthy_with_zero_values(client: TestClient) -> None:
     response = client.get(f"/api/projects/{project['id']}/summary")
 
     assert response.json() == {"total_requests": 0, "average_latency_ms": 0.0, "error_rate": 0.0, "status": "healthy"}
+
+
+def test_recent_telemetry_is_bounded(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+    payload = {"project_id": project["id"], "service_id": service["id"], "event_type": "request"}
+    for _ in range(3):
+        assert client.post("/api/telemetry", json=payload).status_code == 201
+
+    response = client.get(f"/api/projects/{project['id']}/telemetry?limit=2")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 2
