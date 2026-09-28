@@ -1,27 +1,73 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { api, Project, Service, Summary } from "../lib/api";
 
 type ConnectionStatus = "checking" | "connected" | "unavailable";
 
-const summaryCards = [
-  { label: "System Status", value: "Healthy", accent: true },
-  { label: "Requests", value: "0" },
-  { label: "Average Latency", value: "0 ms" },
-  { label: "Error Rate", value: "0%" },
-];
-
 export function Dashboard() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("checking");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [services, setServices] = useState<Service[]>([]);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
+  const [serviceName, setServiceName] = useState("");
+  const [environment, setEnvironment] = useState("development");
+  const [notice, setNotice] = useState<string>("");
+
+  const selectedProject = projects.find((project) => project.id === selectedProjectId);
+
+  async function refreshProjects() {
+    const items = await api.listProjects();
+    setProjects(items);
+    setSelectedProjectId((current) => current || items[0]?.id || "");
+  }
+
+  async function refreshProjectDetails(projectId: string) {
+    const [serviceItems, projectSummary] = await Promise.all([api.listServices(projectId), api.summary(projectId)]);
+    setServices(serviceItems);
+    setSummary(projectSummary);
+  }
 
   useEffect(() => {
-    const controller = new AbortController();
-    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-    fetch(`${apiBaseUrl}/health`, { signal: controller.signal })
-      .then((response) => setConnectionStatus(response.ok ? "connected" : "unavailable"))
-      .catch(() => setConnectionStatus("unavailable"));
-    return () => controller.abort();
+    api.health().then(() => setConnectionStatus("connected")).catch(() => setConnectionStatus("unavailable"));
+    refreshProjects().catch(() => setConnectionStatus("unavailable"));
   }, []);
+
+  useEffect(() => {
+    if (!selectedProjectId) { setServices([]); setSummary(null); return; }
+    refreshProjectDetails(selectedProjectId).catch((error: Error) => setNotice(error.message));
+  }, [selectedProjectId]);
+
+  async function handleProjectSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      const project = await api.createProject({ name: projectName, description: projectDescription || undefined });
+      setProjectName(""); setProjectDescription(""); setNotice("Project created.");
+      await refreshProjects(); setSelectedProjectId(project.id);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not create project"); }
+  }
+
+  async function handleServiceSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedProjectId) return;
+    try {
+      await api.createService(selectedProjectId, { name: serviceName, environment });
+      setServiceName(""); setNotice("Service created."); await refreshProjectDetails(selectedProjectId);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not create service"); }
+  }
+
+  async function sendTestTelemetry(eventType: "request" | "error") {
+    if (!selectedProjectId || !services[0]) { setNotice("Create a service before sending telemetry."); return; }
+    try {
+      await api.sendTelemetry(eventType === "request"
+        ? { project_id: selectedProjectId, service_id: services[0].id, event_type: "request", duration_ms: 142, status_code: 200 }
+        : { project_id: selectedProjectId, service_id: services[0].id, event_type: "error", message: "Development test error" });
+      setNotice(`Test ${eventType} sent to ${services[0].name}.`); await refreshProjectDetails(selectedProjectId);
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Could not send telemetry"); }
+  }
 
   const isConnected = connectionStatus === "connected";
   const connectionLabel = connectionStatus === "checking" ? "Checking API" : isConnected ? "API Connected" : "API Unavailable";
@@ -38,15 +84,26 @@ export function Dashboard() {
         <p className="intro-copy">A clear starting point for monitoring the health of the services you operate.</p>
       </section>
       <section aria-label="System summary">
-        <div className="section-heading"><h2>Overview</h2><p>Current service telemetry</p></div>
+        <div className="section-heading"><h2>Overview</h2><p>{selectedProject ? `${selectedProject.name} telemetry` : "Select a project"}</p></div>
         <div className="summary-grid">
-          {summaryCards.map((card) => <article className="summary-card" key={card.label}><p>{card.label}</p><strong className={card.accent ? "healthy" : undefined}>{card.value}</strong></article>)}
+          <article className="summary-card"><p>System Status</p><strong className={summary?.status === "healthy" ? "healthy" : summary ? "degraded" : undefined}>{summary?.status ?? "—"}</strong></article>
+          <article className="summary-card"><p>Requests</p><strong>{summary?.total_requests ?? 0}</strong></article>
+          <article className="summary-card"><p>Average Latency</p><strong>{summary?.average_latency_ms ?? 0} ms</strong></article>
+          <article className="summary-card"><p>Error Rate</p><strong>{summary?.error_rate ?? 0}%</strong></article>
         </div>
       </section>
-      <section className="services" aria-labelledby="services-title">
-        <div className="section-heading"><h2 id="services-title">Services</h2><p>Connected applications</p></div>
-        <div className="empty-state"><span className="empty-icon" aria-hidden="true">+</span><p>No services connected yet.</p><span>Connect a service to begin receiving telemetry.</span></div>
+      <section className="workspace" aria-label="Project setup">
+        <div className="panel"><div className="section-heading"><h2>Monitored Projects</h2><p>{projects.length} total</p></div>
+          <form className="form" onSubmit={handleProjectSubmit}><input required value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Project name" aria-label="Project name" /><input value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="Description (optional)" aria-label="Project description" /><button type="submit">Create project</button></form>
+          <div className="project-list">{projects.length ? projects.map((project) => <button className={`project-item ${project.id === selectedProjectId ? "selected" : ""}`} key={project.id} onClick={() => setSelectedProjectId(project.id)}><span>{project.name}</span><small>{project.description || "No description"}</small></button>) : <p className="muted">No projects yet. Create one to get started.</p>}</div>
+        </div>
+        <div className="panel services" aria-labelledby="services-title"><div className="section-heading"><h2 id="services-title">Services</h2><p>{selectedProject ? selectedProject.name : "No project selected"}</p></div>
+          {selectedProject && <form className="form compact" onSubmit={handleServiceSubmit}><input required value={serviceName} onChange={(event) => setServiceName(event.target.value)} placeholder="Service name" aria-label="Service name" /><input required value={environment} onChange={(event) => setEnvironment(event.target.value)} placeholder="Environment" aria-label="Environment" /><button type="submit">Add service</button></form>}
+          <div className="service-list">{selectedProject ? services.length ? services.map((service) => <div className="service-item" key={service.id}><span>{service.name}</span><small>{service.environment}</small></div>) : <p className="muted">No services connected yet.</p> : <p className="muted">Select a project to manage its services.</p>}</div>
+        </div>
       </section>
+      <section className="demo panel" aria-labelledby="demo-title"><div><p className="eyebrow">Development demo</p><h2 id="demo-title">Send real test telemetry</h2><p className="muted">Sends to the first service in the selected project and refreshes its summary.</p></div><div className="demo-actions"><button disabled={!selectedProjectId || !services.length} onClick={() => sendTestTelemetry("request")}>Send Test Request</button><button className="secondary" disabled={!selectedProjectId || !services.length} onClick={() => sendTestTelemetry("error")}>Send Test Error</button></div></section>
+      {notice && <p className="notice" role="status">{notice}</p>}
     </main>
   );
 }
