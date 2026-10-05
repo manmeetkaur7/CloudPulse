@@ -63,6 +63,10 @@ class TelemetryEventRecord(Base):
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    span_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    http_method: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    http_route: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     project: Mapped[ProjectRecord] = relationship(back_populates="telemetry_events")
     service: Mapped[ServiceRecord] = relationship(back_populates="telemetry_events")

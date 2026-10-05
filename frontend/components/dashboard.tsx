@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api, Project, Service, Summary } from "../lib/api";
+import { api, Project, Service, Summary, TelemetryEvent } from "../lib/api";
 
 type ConnectionStatus = "checking" | "connected" | "unavailable";
 
@@ -11,6 +11,7 @@ export function Dashboard() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [services, setServices] = useState<Service[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [recentTelemetry, setRecentTelemetry] = useState<TelemetryEvent[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [serviceName, setServiceName] = useState("");
@@ -26,9 +27,10 @@ export function Dashboard() {
   }
 
   async function refreshProjectDetails(projectId: string) {
-    const [serviceItems, projectSummary] = await Promise.all([api.listServices(projectId), api.summary(projectId)]);
+    const [serviceItems, projectSummary, events] = await Promise.all([api.listServices(projectId), api.summary(projectId), api.listTelemetry(projectId)]);
     setServices(serviceItems);
     setSummary(projectSummary);
+    setRecentTelemetry(events);
   }
 
   useEffect(() => {
@@ -37,7 +39,7 @@ export function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (!selectedProjectId) { setServices([]); setSummary(null); return; }
+    if (!selectedProjectId) { setServices([]); setSummary(null); setRecentTelemetry([]); return; }
     refreshProjectDetails(selectedProjectId).catch((error: Error) => setNotice(error.message));
   }, [selectedProjectId]);
 
@@ -64,7 +66,7 @@ export function Dashboard() {
     try {
       await api.sendTelemetry(eventType === "request"
         ? { project_id: selectedProjectId, service_id: services[0].id, event_type: "request", duration_ms: 142, status_code: 200 }
-        : { project_id: selectedProjectId, service_id: services[0].id, event_type: "error", message: "Development test error" });
+        : { project_id: selectedProjectId, service_id: services[0].id, event_type: "error", message: "Development test error", http_method: "GET", http_route: "/development-test" });
       setNotice(`Test ${eventType} sent to ${services[0].name}.`); await refreshProjectDetails(selectedProjectId);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Could not send telemetry"); }
   }
@@ -103,6 +105,29 @@ export function Dashboard() {
         </div>
       </section>
       <section className="demo panel" aria-labelledby="demo-title"><div><p className="eyebrow">Development demo</p><h2 id="demo-title">Send real test telemetry</h2><p className="muted">Sends to the first service in the selected project and refreshes its summary.</p></div><div className="demo-actions"><button disabled={!selectedProjectId || !services.length} onClick={() => sendTestTelemetry("request")}>Send Test Request</button><button className="secondary" disabled={!selectedProjectId || !services.length} onClick={() => sendTestTelemetry("error")}>Send Test Error</button></div></section>
+      <section className="recent panel" aria-labelledby="recent-title">
+        <div className="section-heading"><h2 id="recent-title">Recent Telemetry</h2><p>Last 10 events</p></div>
+        {recentTelemetry.length ? <div className="telemetry-list">
+          {recentTelemetry.map((event) => {
+            const serviceName = services.find((service) => service.id === event.service_id)?.name ?? "Unknown service";
+            const hasHttpDetails = event.http_method || event.http_route;
+            const isServerError = event.status_code !== null && event.status_code >= 500;
+            return <article className="telemetry-card" key={event.id}>
+              <div className="telemetry-card__topline">
+                <span className={`event-type event-type--${event.event_type}`}>{event.event_type}</span>
+                <span className="telemetry-service">{serviceName}</span>
+                <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleString()}</time>
+              </div>
+              <div className="telemetry-card__details">
+                <div><span>HTTP</span><strong>{hasHttpDetails ? <>{event.http_method ?? "—"} {event.http_route ?? "—"}</> : "Not provided"}</strong></div>
+                <div><span>Status</span><strong className={isServerError ? "status-error" : "status-ok"}>{event.status_code ?? "—"}</strong></div>
+                <div><span>Latency</span><strong>{event.duration_ms === null ? "—" : `${event.duration_ms} ms`}</strong></div>
+              </div>
+              {event.message && <p className="telemetry-message">{event.message}</p>}
+            </article>;
+          })}
+        </div> : <p className="muted">No telemetry received for this project yet.</p>}
+      </section>
       {notice && <p className="notice" role="status">{notice}</p>}
     </main>
   );

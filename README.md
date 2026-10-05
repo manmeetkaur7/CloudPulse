@@ -19,6 +19,7 @@ Planned: persistent storage, richer metrics and dashboards, incidents, alerts, O
 - Create and list monitored projects.
 - Create and list services within a project.
 - Submit `request` and `error` telemetry events for a service.
+- Ingest external telemetry through versioned single-event and batch endpoints.
 - View a selected project's request count, average request latency, error rate, and deterministic health status.
 - Use the dashboard's Development demo controls to submit real test request or error events to its selected project's first service.
 
@@ -30,6 +31,27 @@ Projects, services, and telemetry are stored in PostgreSQL and survive backend r
 - `average_latency_ms` averages `duration_ms` only among request events that include a duration; it is `0` when none do.
 - `error_rate` is `(explicit error events + request events with status code 500 or higher) / (request events + explicit error events) * 100`. A request with a 5xx status is counted once.
 - Status is `healthy` below a 10% error rate and `degraded` at or above 10%. This is a deterministic threshold, not anomaly detection.
+
+### Telemetry ingestion
+
+External applications can submit a single event to `POST /api/v1/telemetry/events` or up to 100 events atomically to `POST /api/v1/telemetry/batch`. Batch validation occurs before any events are written.
+
+```json
+{
+  "project_id": "project-id",
+  "service_id": "service-id",
+  "event_type": "request",
+  "timestamp": "2026-10-05T19:00:00Z",
+  "duration_ms": 142,
+  "status_code": 200,
+  "trace_id": "0123456789abcdef0123456789abcdef",
+  "span_id": "0123456789abcdef",
+  "http_method": "GET",
+  "http_route": "/movies/{id}"
+}
+```
+
+The model uses OpenTelemetry-compatible concepts such as trace/span IDs, service, duration, and HTTP attributes. CloudPulse is **not** an OTLP receiver or collector yet. See [the Python telemetry client example](examples/telemetry-client/README.md) for a runnable external-client demonstration.
 
 ## Local development
 

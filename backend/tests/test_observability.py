@@ -139,3 +139,69 @@ def test_recent_telemetry_is_bounded(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert len(response.json()) == 2
+
+
+def test_v1_ingestion_accepts_otel_compatible_metadata_and_normalizes_utc(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+
+    response = client.post("/api/v1/telemetry/events", json={
+        "project_id": project["id"], "service_id": service["id"], "event_type": "request",
+        "timestamp": "2026-10-05T12:00:00-07:00", "duration_ms": 142, "status_code": 200,
+        "trace_id": "A" * 32, "span_id": "B" * 16, "http_method": "get", "http_route": "/movies/{id}",
+    })
+
+    assert response.status_code == 201
+    assert response.json()["timestamp"] == "2026-10-05T19:00:00Z"
+    assert response.json()["trace_id"] == "a" * 32
+    assert response.json()["span_id"] == "b" * 16
+    assert response.json()["http_method"] == "GET"
+
+
+def test_v1_ingestion_rejects_invalid_status_and_naive_timestamp(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+    payload = {"project_id": project["id"], "service_id": service["id"], "event_type": "request"}
+
+    invalid_status = client.post("/api/v1/telemetry/events", json={**payload, "status_code": 700})
+    naive_timestamp = client.post("/api/v1/telemetry/events", json={**payload, "timestamp": "2026-10-05T12:00:00"})
+
+    assert invalid_status.status_code == 422
+    assert naive_timestamp.status_code == 422
+
+
+def test_v1_batch_ingestion_is_atomic_and_returns_accepted_count(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+    valid_event = {"project_id": project["id"], "service_id": service["id"], "event_type": "request", "duration_ms": 142}
+    invalid_event = {"project_id": project["id"], "service_id": "missing", "event_type": "error"}
+
+    failed_response = client.post("/api/v1/telemetry/batch", json={"events": [valid_event, invalid_event]})
+    telemetry_after_failure = client.get(f"/api/projects/{project['id']}/telemetry")
+    success_response = client.post("/api/v1/telemetry/batch", json={"events": [valid_event, {**valid_event, "event_type": "error"}]})
+
+    assert failed_response.status_code == 404
+    assert telemetry_after_failure.json() == []
+    assert success_response.status_code == 201
+    assert success_response.json() == {"accepted_count": 2}
+
+
+def test_v1_batch_enforces_size_limit(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+    event = {"project_id": project["id"], "service_id": service["id"], "event_type": "request"}
+
+    response = client.post("/api/v1/telemetry/batch", json={"events": [event] * 101})
+
+    assert response.status_code == 422
+
+
+def test_summary_preserves_two_requests_and_one_error_semantics(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+    event = {"project_id": project["id"], "service_id": service["id"], "event_type": "request", "duration_ms": 142, "status_code": 200}
+    client.post("/api/v1/telemetry/batch", json={"events": [event, event, {**event, "event_type": "error", "duration_ms": None}]})
+
+    response = client.get(f"/api/projects/{project['id']}/summary")
+
+    assert response.json() == {"total_requests": 2, "average_latency_ms": 142.0, "error_rate": 33.33, "status": "degraded"}

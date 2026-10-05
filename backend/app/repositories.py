@@ -42,13 +42,27 @@ class SqlAlchemyRepository:
     def create_telemetry_event(self, data: TelemetryEventCreate) -> TelemetryEventRecord:
         event = TelemetryEventRecord(
             id=str(uuid4()),
-            timestamp=datetime.now(UTC),
+            timestamp=data.timestamp or datetime.now(UTC),
             event_type=data.event_type.value,
-            **data.model_dump(exclude={"event_type"}),
+            **data.model_dump(exclude={"event_type", "timestamp"}),
         )
         self.session.add(event)
         self.session.flush()
         return event
+
+    def create_telemetry_events(self, events: list[TelemetryEventCreate]) -> list[TelemetryEventRecord]:
+        records = [
+            TelemetryEventRecord(
+                id=str(uuid4()),
+                timestamp=data.timestamp or datetime.now(UTC),
+                event_type=data.event_type.value,
+                **data.model_dump(exclude={"event_type", "timestamp"}),
+            )
+            for data in events
+        ]
+        self.session.add_all(records)
+        self.session.flush()
+        return records
 
     def list_recent_events(self, project_id: str, limit: int) -> list[TelemetryEventRecord]:
         statement = select(TelemetryEventRecord).where(TelemetryEventRecord.project_id == project_id).order_by(TelemetryEventRecord.timestamp.desc()).limit(limit)

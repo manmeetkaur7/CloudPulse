@@ -1,6 +1,8 @@
 export type Project = { id: string; name: string; description: string | null; created_at: string };
 export type Service = { id: string; project_id: string; name: string; environment: string; created_at: string };
 export type Summary = { total_requests: number; average_latency_ms: number; error_rate: number; status: "healthy" | "degraded" };
+export type TelemetryEvent = { id: string; project_id: string; service_id: string; event_type: "request" | "error"; timestamp: string; duration_ms: number | null; status_code: number | null; message: string | null; trace_id: string | null; span_id: string | null; http_method: string | null; http_route: string | null };
+export type TelemetryInput = { project_id: string; service_id: string; event_type: "request" | "error"; timestamp?: string; duration_ms?: number; status_code?: number; message?: string; trace_id?: string; span_id?: string; http_method?: string; http_route?: string };
 
 const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
@@ -24,5 +26,6 @@ export const api = {
   listServices: (projectId: string) => request<Service[]>(`/api/projects/${projectId}/services`),
   createService: (projectId: string, data: { name: string; environment: string }) => request<Service>(`/api/projects/${projectId}/services`, { method: "POST", body: JSON.stringify(data) }),
   summary: (projectId: string) => request<Summary>(`/api/projects/${projectId}/summary`),
-  sendTelemetry: (data: { project_id: string; service_id: string; event_type: "request" | "error"; duration_ms?: number; status_code?: number; message?: string }) => request("/api/telemetry", { method: "POST", body: JSON.stringify(data) }),
+  listTelemetry: (projectId: string) => request<TelemetryEvent[]>(`/api/projects/${projectId}/telemetry?limit=10`),
+  sendTelemetry: (data: TelemetryInput) => request<TelemetryEvent>("/api/v1/telemetry/events", { method: "POST", body: JSON.stringify(data) }),
 };
