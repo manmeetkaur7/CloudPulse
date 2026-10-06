@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import get_repository
 from app.models import TelemetryBatchCreate, TelemetryBatchResult, TelemetryEvent, TelemetryEventCreate
@@ -18,6 +18,14 @@ def validate_relationships(data: TelemetryEventCreate, repository: SqlAlchemyRep
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Service does not belong to project")
 
 
+async def notify_created(request: Request, event: TelemetryEvent) -> None:
+    await request.app.state.connection_manager.broadcast(event.project_id, {
+        "type": "telemetry.created",
+        "project_id": event.project_id,
+        "event": event.model_dump(mode="json"),
+    })
+
+
 @router.post("/telemetry", response_model=TelemetryEvent, status_code=status.HTTP_201_CREATED)
 def ingest_telemetry(data: TelemetryEventCreate, repository: SqlAlchemyRepository = Depends(get_repository)) -> TelemetryEvent:
     validate_relationships(data, repository)
@@ -25,14 +33,20 @@ def ingest_telemetry(data: TelemetryEventCreate, repository: SqlAlchemyRepositor
 
 
 @ingestion_router.post("/events", response_model=TelemetryEvent, status_code=status.HTTP_201_CREATED)
-def ingest_event(data: TelemetryEventCreate, repository: SqlAlchemyRepository = Depends(get_repository)) -> TelemetryEvent:
+async def ingest_event(data: TelemetryEventCreate, request: Request, repository: SqlAlchemyRepository = Depends(get_repository)) -> TelemetryEvent:
     validate_relationships(data, repository)
-    return repository.create_telemetry_event(data)
+    event = TelemetryEvent.model_validate(repository.create_telemetry_event(data))
+    repository.commit()
+    await notify_created(request, event)
+    return event
 
 
 @ingestion_router.post("/batch", response_model=TelemetryBatchResult, status_code=status.HTTP_201_CREATED)
-def ingest_batch(data: TelemetryBatchCreate, repository: SqlAlchemyRepository = Depends(get_repository)) -> TelemetryBatchResult:
+async def ingest_batch(data: TelemetryBatchCreate, request: Request, repository: SqlAlchemyRepository = Depends(get_repository)) -> TelemetryBatchResult:
     for event in data.events:
         validate_relationships(event, repository)
-    repository.create_telemetry_events(data.events)
+    events = [TelemetryEvent.model_validate(event) for event in repository.create_telemetry_events(data.events)]
+    repository.commit()
+    for event in events:
+        await notify_created(request, event)
     return TelemetryBatchResult(accepted_count=len(data.events))

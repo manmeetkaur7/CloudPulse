@@ -53,6 +53,10 @@ External applications can submit a single event to `POST /api/v1/telemetry/event
 
 The model uses OpenTelemetry-compatible concepts such as trace/span IDs, service, duration, and HTTP attributes. CloudPulse is **not** an OTLP receiver or collector yet. See [the Python telemetry client example](examples/telemetry-client/README.md) for a runnable external-client demonstration.
 
+### Real-time dashboard updates
+
+After telemetry is committed to PostgreSQL, CloudPulse broadcasts a `telemetry.created` notification to dashboard clients subscribed to `WS /ws/projects/{project_id}/telemetry`. The dashboard then refetches the summary and recent events from the API; PostgreSQL remains the source of truth. The current connection manager is single-instance only. Horizontal scaling will require shared pub/sub infrastructure such as Redis or another event system, which is not implemented yet.
+
 ## Local development
 
 1. Install and start PostgreSQL, then create a database and local user. See [PostgreSQL setup](#postgresql-setup).

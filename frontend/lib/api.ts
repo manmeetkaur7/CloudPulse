@@ -6,6 +6,13 @@ export type TelemetryInput = { project_id: string; service_id: string; event_typ
 
 const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+export function telemetryWebSocketUrl(projectId: string): string {
+  const url = new URL(baseUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = `/ws/projects/${projectId}/telemetry`;
+  return url.toString();
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     ...options,

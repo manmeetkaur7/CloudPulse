@@ -3,15 +3,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.projects import router as projects_router
+from app.api.realtime import router as realtime_router
 from app.api.telemetry import ingestion_router, router as telemetry_router
 from app.core.config import get_settings
 from app.core.database import SessionLocal
 from sqlalchemy.orm import Session, sessionmaker
+from app.realtime.manager import ProjectConnectionManager
 
 def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="CloudPulse API", version="0.3.0")
     app.state.session_factory = session_factory or SessionLocal
+    app.state.connection_manager = ProjectConnectionManager()
 
     app.add_middleware(
         CORSMiddleware,
@@ -24,6 +27,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
     app.include_router(projects_router)
     app.include_router(telemetry_router)
     app.include_router(ingestion_router)
+    app.include_router(realtime_router)
     return app
 
 

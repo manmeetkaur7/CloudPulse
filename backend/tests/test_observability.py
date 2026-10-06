@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -6,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import create_app
 from app.db_models import Base
+from app.realtime.manager import ProjectConnectionManager
 
 
 @pytest.fixture
@@ -205,3 +208,38 @@ def test_summary_preserves_two_requests_and_one_error_semantics(client: TestClie
     response = client.get(f"/api/projects/{project['id']}/summary")
 
     assert response.json() == {"total_requests": 2, "average_latency_ms": 142.0, "error_rate": 33.33, "status": "degraded"}
+
+
+def test_project_websocket_receives_persisted_ingestion_event(client: TestClient) -> None:
+    project = create_project(client)
+    service = create_service(client, str(project["id"]))
+    payload = {"project_id": project["id"], "service_id": service["id"], "event_type": "request", "duration_ms": 142}
+
+    with client.websocket_connect(f"/ws/projects/{project['id']}/telemetry") as websocket:
+        response = client.post("/api/v1/telemetry/events", json=payload)
+        message = websocket.receive_json()
+
+    assert response.status_code == 201
+    assert message["type"] == "telemetry.created"
+    assert message["project_id"] == project["id"]
+    assert message["event"]["id"] == response.json()["id"]
+
+
+def test_project_websocket_does_not_receive_other_project_events(client: TestClient) -> None:
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+
+    manager = ProjectConnectionManager()
+    first_socket = FakeSocket()
+    second_socket = FakeSocket()
+    manager._connections["first"].add(first_socket)  # type: ignore[arg-type]
+    manager._connections["second"].add(second_socket)  # type: ignore[arg-type]
+
+    asyncio.run(manager.broadcast("second", {"type": "telemetry.created"}))
+
+    assert first_socket.messages == []
+    assert second_socket.messages == [{"type": "telemetry.created"}]

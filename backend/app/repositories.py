@@ -64,6 +64,9 @@ class SqlAlchemyRepository:
         self.session.flush()
         return records
 
+    def commit(self) -> None:
+        self.session.commit()
+
     def list_recent_events(self, project_id: str, limit: int) -> list[TelemetryEventRecord]:
         statement = select(TelemetryEventRecord).where(TelemetryEventRecord.project_id == project_id).order_by(TelemetryEventRecord.timestamp.desc()).limit(limit)
         return list(self.session.scalars(statement))

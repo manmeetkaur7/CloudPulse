@@ -21,6 +21,12 @@ The project summary is calculated from stored events: request count, average req
 
 Telemetry stores optional trace IDs, span IDs, HTTP method, and HTTP route alongside the existing timestamp, duration, status, and error message. These are OpenTelemetry-compatible internal concepts only: CloudPulse is not an OTLP receiver or collector in this stage.
 
+## Real-time notifications
+
+The ingestion API persists telemetry first, commits the transaction, then emits one `telemetry.created` WebSocket notification per event to `WS /ws/projects/{project_id}/telemetry`. Batch ingestion emits individual notifications only after the complete batch commits. Dashboard clients use notifications to refetch the PostgreSQL-backed summary and bounded recent-event list.
+
+The connection manager is intentionally in-process and supports multiple clients per project on one backend instance. PostgreSQL remains the source of truth. Horizontal scaling will later require shared pub/sub infrastructure such as Redis or another event system; neither is implemented in this stage.
+
 No authentication, background processing, or real-time transport exists in this stage.
 
 ## Future directions

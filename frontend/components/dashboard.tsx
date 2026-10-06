@@ -1,12 +1,14 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api, Project, Service, Summary, TelemetryEvent } from "../lib/api";
+import { api, Project, Service, Summary, TelemetryEvent, telemetryWebSocketUrl } from "../lib/api";
 
 type ConnectionStatus = "checking" | "connected" | "unavailable";
+type LiveStatus = "connecting" | "live" | "reconnecting" | "offline";
 
 export function Dashboard() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("checking");
+  const [liveStatus, setLiveStatus] = useState<LiveStatus>("offline");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [services, setServices] = useState<Service[]>([]);
@@ -35,12 +37,40 @@ export function Dashboard() {
 
   useEffect(() => {
     api.health().then(() => setConnectionStatus("connected")).catch(() => setConnectionStatus("unavailable"));
-    refreshProjects().catch(() => setConnectionStatus("unavailable"));
+    void Promise.resolve().then(refreshProjects).catch(() => setConnectionStatus("unavailable"));
   }, []);
 
   useEffect(() => {
-    if (!selectedProjectId) { setServices([]); setSummary(null); setRecentTelemetry([]); return; }
-    refreshProjectDetails(selectedProjectId).catch((error: Error) => setNotice(error.message));
+    if (!selectedProjectId) { queueMicrotask(() => { setServices([]); setSummary(null); setRecentTelemetry([]); }); return; }
+    void Promise.resolve().then(() => refreshProjectDetails(selectedProjectId)).catch((error: Error) => setNotice(error.message));
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (!selectedProjectId) { queueMicrotask(() => setLiveStatus("offline")); return; }
+    let socket: WebSocket | undefined;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let closedByEffect = false;
+    let attempts = 0;
+
+    const connect = () => {
+      setLiveStatus(attempts ? "reconnecting" : "connecting");
+      socket = new WebSocket(telemetryWebSocketUrl(selectedProjectId));
+      socket.onopen = () => { attempts = 0; setLiveStatus("live"); };
+      socket.onmessage = (message) => {
+        const payload = JSON.parse(message.data) as { type?: string };
+        if (payload.type === "telemetry.created") refreshProjectDetails(selectedProjectId).catch((error: Error) => setNotice(error.message));
+      };
+      socket.onclose = () => {
+        if (closedByEffect) return;
+        attempts += 1;
+        if (attempts > 5) { setLiveStatus("offline"); return; }
+        reconnectTimer = setTimeout(connect, Math.min(1000 * 2 ** (attempts - 1), 8000));
+      };
+      socket.onerror = () => socket?.close();
+    };
+
+    connect();
+    return () => { closedByEffect = true; if (reconnectTimer) clearTimeout(reconnectTimer); socket?.close(); };
   }, [selectedProjectId]);
 
   async function handleProjectSubmit(event: FormEvent<HTMLFormElement>) {
@@ -79,6 +109,7 @@ export function Dashboard() {
       <header className="topbar">
         <a className="brand" href="#top" aria-label="CloudPulse home"><span className="brand-mark" aria-hidden="true">C</span><span>CloudPulse</span></a>
         <div className={`connection ${isConnected ? "connection--online" : ""}`} aria-live="polite"><span className="connection-dot" />{connectionLabel}</div>
+        <div className={`live-status live-status--${liveStatus}`} aria-live="polite"><span className="connection-dot" />{liveStatus === "live" ? "Live" : liveStatus[0].toUpperCase() + liveStatus.slice(1)}</div>
       </header>
       <section id="top" className="intro" aria-labelledby="page-title">
         <p className="eyebrow">Observability workspace</p>
