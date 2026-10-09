@@ -57,6 +57,10 @@ The model uses OpenTelemetry-compatible concepts such as trace/span IDs, service
 
 After telemetry is committed to PostgreSQL, CloudPulse broadcasts a `telemetry.created` notification to dashboard clients subscribed to `WS /ws/projects/{project_id}/telemetry`. The dashboard then refetches the summary and recent events from the API; PostgreSQL remains the source of truth. The current connection manager is single-instance only. Horizontal scaling will require shared pub/sub infrastructure such as Redis or another event system, which is not implemented yet.
 
+### Optional Redis support
+
+Set `REDIS_URL=redis://localhost:6379/0` to enable a 45-second project-summary cache and cross-instance real-time notifications. PostgreSQL remains durable source of truth. Without Redis, telemetry still persists and local dashboard clients still receive notifications; summary requests calculate from PostgreSQL. Redis pub/sub is not a durable event queue.
+
 ## Local development
 
 1. Install and start PostgreSQL, then create a database and local user. See [PostgreSQL setup](#postgresql-setup).

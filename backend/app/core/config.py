@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
     database_url: str = Field(validation_alias="DATABASE_URL")
+    redis_url: str | None = Field(default=None, validation_alias="REDIS_URL")
     model_config = SettingsConfigDict(env_prefix="BACKEND_", case_sensitive=False)
 
     @property

@@ -19,11 +19,14 @@ def validate_relationships(data: TelemetryEventCreate, repository: SqlAlchemyRep
 
 
 async def notify_created(request: Request, event: TelemetryEvent) -> None:
-    await request.app.state.connection_manager.broadcast(event.project_id, {
+    message = {
         "type": "telemetry.created",
         "project_id": event.project_id,
         "event": event.model_dump(mode="json"),
-    })
+    }
+    await request.app.state.redis_service.invalidate_summary(event.project_id)
+    if not await request.app.state.redis_service.publish(event.project_id, message):
+        await request.app.state.connection_manager.broadcast(event.project_id, message)
 
 
 @router.post("/telemetry", response_model=TelemetryEvent, status_code=status.HTTP_201_CREATED)

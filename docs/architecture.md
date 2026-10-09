@@ -25,7 +25,9 @@ Telemetry stores optional trace IDs, span IDs, HTTP method, and HTTP route along
 
 The ingestion API persists telemetry first, commits the transaction, then emits one `telemetry.created` WebSocket notification per event to `WS /ws/projects/{project_id}/telemetry`. Batch ingestion emits individual notifications only after the complete batch commits. Dashboard clients use notifications to refetch the PostgreSQL-backed summary and bounded recent-event list.
 
-The connection manager is intentionally in-process and supports multiple clients per project on one backend instance. PostgreSQL remains the source of truth. Horizontal scaling will later require shared pub/sub infrastructure such as Redis or another event system; neither is implemented in this stage.
+Redis is optional infrastructure. When configured, ingestion commits to PostgreSQL, invalidates `cloudpulse:project:{project_id}:summary`, then publishes on `cloudpulse:project:{project_id}:telemetry`. Every FastAPI instance subscribes and forwards notifications only to its own local WebSocket connections. Summary cache entries use a 45-second TTL. Cache/pub-sub failures fall back to PostgreSQL and local notifications without rolling back telemetry.
+
+PostgreSQL is the durable source of truth; Redis caching is a short-lived optimization and Redis pub/sub is not a durable event queue. Without Redis, CloudPulse remains functional for one backend instance. Horizontal scaling uses Redis notifications now; durable event streaming may use a separate system later.
 
 No authentication, background processing, or real-time transport exists in this stage.
 

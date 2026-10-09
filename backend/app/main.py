@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -9,12 +11,22 @@ from app.core.config import get_settings
 from app.core.database import SessionLocal
 from sqlalchemy.orm import Session, sessionmaker
 from app.realtime.manager import ProjectConnectionManager
+from app.infrastructure.redis_service import RedisService
 
-def create_app(session_factory: sessionmaker[Session] | None = None) -> FastAPI:
+def create_app(session_factory: sessionmaker[Session] | None = None, redis_service: RedisService | None = None) -> FastAPI:
     settings = get_settings()
-    app = FastAPI(title="CloudPulse API", version="0.3.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        async def forward(message: dict[str, object]) -> None:
+            await app.state.connection_manager.broadcast(str(message["project_id"]), message)
+        await app.state.redis_service.start(forward)
+        yield
+        await app.state.redis_service.stop()
+
+    app = FastAPI(title="CloudPulse API", version="0.6.0", lifespan=lifespan)
     app.state.session_factory = session_factory or SessionLocal
     app.state.connection_manager = ProjectConnectionManager()
+    app.state.redis_service = redis_service or RedisService(settings.redis_url)
 
     app.add_middleware(
         CORSMiddleware,

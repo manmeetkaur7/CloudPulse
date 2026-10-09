@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.api.dependencies import get_repository
 from app.models import Project, ProjectCreate, ProjectSummary, Service, ServiceCreate, TelemetryEvent
@@ -41,8 +41,11 @@ def list_telemetry(project_id: str, limit: int = Query(default=50, ge=1, le=100)
 
 
 @router.get("/projects/{project_id}/summary", response_model=ProjectSummary)
-def project_summary(project_id: str, repository: SqlAlchemyRepository = Depends(get_repository)) -> ProjectSummary:
+async def project_summary(project_id: str, request: Request, repository: SqlAlchemyRepository = Depends(get_repository)) -> ProjectSummary:
     require_project(project_id, repository)
+    cached = await request.app.state.redis_service.get_summary(project_id)
+    if cached:
+        return ProjectSummary.model_validate(cached)
     events = repository.list_project_events(project_id)
     requests = [event for event in events if event.event_type == "request"]
     explicit_errors = [event for event in events if event.event_type == "error"]
@@ -51,9 +54,11 @@ def project_summary(project_id: str, repository: SqlAlchemyRepository = Depends(
     population = len(requests) + len(explicit_errors)
     error_rate = round((errors / population * 100) if population else 0, 2)
     average_latency = round((sum(durations) / len(durations)) if durations else 0, 2)
-    return ProjectSummary(
+    summary = ProjectSummary(
         total_requests=len(requests),
         average_latency_ms=average_latency,
         error_rate=error_rate,
         status="degraded" if error_rate >= 10 else "healthy",
     )
+    await request.app.state.redis_service.set_summary(project_id, summary.model_dump())
+    return summary
