@@ -21,6 +21,7 @@ Planned: persistent storage, richer metrics and dashboards, incidents, alerts, O
 - Submit `request` and `error` telemetry events for a service.
 - Ingest external telemetry through versioned single-event and batch endpoints.
 - View a selected project's request count, average request latency, error rate, and deterministic health status.
+- Explore PostgreSQL-backed historical request volume, average/P95 latency, and error-rate charts for the last 15 minutes, hour, 24 hours, or 7 days.
 - Use the dashboard's Development demo controls to submit real test request or error events to its selected project's first service.
 
 Projects, services, and telemetry are stored in PostgreSQL and survive backend restarts once migrations have been applied.
@@ -52,6 +53,12 @@ External applications can submit a single event to `POST /api/v1/telemetry/event
 ```
 
 The model uses OpenTelemetry-compatible concepts such as trace/span IDs, service, duration, and HTTP attributes. CloudPulse is **not** an OTLP receiver or collector yet. See [the Python telemetry client example](examples/telemetry-client/README.md) for a runnable external-client demonstration.
+
+### Historical metrics
+
+`GET /api/v1/projects/{project_id}/metrics` returns UTC-aligned metric buckets from PostgreSQL. It accepts `time_range=15m|1h|24h|7d` (default `1h`) and an optional `service_id` belonging to the selected project. Bucket widths are one minute for `15m`, five minutes for `1h`, one hour for `24h`, and six hours for `7d`; empty buckets are included. Each bucket contains `request_count`, `error_count`, `error_rate`, `average_latency_ms`, and `p95_latency_ms`.
+
+P95 uses continuous percentile interpolation, equivalent to PostgreSQL's `percentile_cont(0.95)`. Error classification matches the summary metric rules. The dashboard refetches the selected range after relevant WebSocket telemetry notifications, with a short debounce to avoid one chart request per burst event.
 
 ### Real-time dashboard updates
 

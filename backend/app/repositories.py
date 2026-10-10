@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, literal_column, or_, select
 from sqlalchemy.orm import Session
 
 from app.db_models import ProjectRecord, ServiceRecord, TelemetryEventRecord
@@ -74,3 +74,44 @@ class SqlAlchemyRepository:
     def list_project_events(self, project_id: str) -> list[TelemetryEventRecord]:
         statement = select(TelemetryEventRecord).where(TelemetryEventRecord.project_id == project_id)
         return list(self.session.scalars(statement))
+
+    def list_historical_events(
+        self, project_id: str, start_at: datetime, end_at: datetime, service_id: str | None = None
+    ) -> list[TelemetryEventRecord]:
+        statement = select(TelemetryEventRecord).where(
+            TelemetryEventRecord.project_id == project_id,
+            TelemetryEventRecord.timestamp >= start_at,
+            TelemetryEventRecord.timestamp < end_at,
+        )
+        if service_id is not None:
+            statement = statement.where(TelemetryEventRecord.service_id == service_id)
+        return list(self.session.scalars(statement))
+
+    def aggregate_historical_metrics(
+        self, project_id: str, start_at: datetime, end_at: datetime, bucket_width_seconds: int, service_id: str | None = None
+    ) -> list[object] | None:
+        """Aggregate populated buckets in PostgreSQL; SQLite tests use the portable fallback."""
+        if self.session.bind is None or self.session.bind.dialect.name != "postgresql":
+            return None
+        event = TelemetryEventRecord
+        bucket = func.date_bin(
+            literal_column(f"INTERVAL '{bucket_width_seconds} seconds'"),
+            event.timestamp,
+            literal_column("TIMESTAMPTZ '1970-01-01 00:00:00+00'"),
+        ).label("timestamp")
+        is_request = event.event_type == "request"
+        is_explicit_error = event.event_type == "error"
+        is_error = or_(is_explicit_error, and_(is_request, event.status_code >= 500))
+        statement = select(
+            bucket,
+            func.count().filter(is_request).label("request_count"),
+            func.count().filter(is_explicit_error).label("explicit_error_count"),
+            func.count().filter(is_error).label("error_count"),
+            func.avg(event.duration_ms).filter(and_(is_request, event.duration_ms.is_not(None))).label("average_latency_ms"),
+            func.percentile_cont(0.95).within_group(event.duration_ms).filter(
+                and_(is_request, event.duration_ms.is_not(None))
+            ).label("p95_latency_ms"),
+        ).where(event.project_id == project_id, event.timestamp >= start_at, event.timestamp < end_at)
+        if service_id is not None:
+            statement = statement.where(event.service_id == service_id)
+        return list(self.session.execute(statement.group_by(bucket).order_by(bucket)).mappings())

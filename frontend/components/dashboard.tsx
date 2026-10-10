@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { api, Project, Service, Summary, TelemetryEvent, telemetryWebSocketUrl } from "../lib/api";
+import { MetricsCharts } from "./metrics-charts";
+import { api, MetricsTimeRange, Project, ProjectMetrics, Service, Summary, TelemetryEvent, telemetryWebSocketUrl } from "../lib/api";
 
 type ConnectionStatus = "checking" | "connected" | "unavailable";
 type LiveStatus = "connecting" | "live" | "reconnecting" | "offline";
@@ -14,6 +15,11 @@ export function Dashboard() {
   const [services, setServices] = useState<Service[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [recentTelemetry, setRecentTelemetry] = useState<TelemetryEvent[]>([]);
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null);
+  const [metricsRange, setMetricsRange] = useState<MetricsTimeRange>("1h");
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [metricsRefreshKey, setMetricsRefreshKey] = useState(0);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
   const [serviceName, setServiceName] = useState("");
@@ -46,9 +52,24 @@ export function Dashboard() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    if (!selectedProjectId) { queueMicrotask(() => { setMetrics(null); setMetricsError(null); setMetricsLoading(false); }); return; }
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      if (controller.signal.aborted) return;
+      setMetricsLoading(true); setMetricsError(null);
+      api.metrics(selectedProjectId, metricsRange, controller.signal)
+        .then((value) => { if (!controller.signal.aborted) setMetrics(value); })
+        .catch((error: Error) => { if (!controller.signal.aborted) setMetricsError(error.message); })
+        .finally(() => { if (!controller.signal.aborted) setMetricsLoading(false); });
+    });
+    return () => controller.abort();
+  }, [selectedProjectId, metricsRange, metricsRefreshKey]);
+
+  useEffect(() => {
     if (!selectedProjectId) { queueMicrotask(() => setLiveStatus("offline")); return; }
     let socket: WebSocket | undefined;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let metricsRefreshTimer: ReturnType<typeof setTimeout> | undefined;
     let closedByEffect = false;
     let attempts = 0;
 
@@ -58,7 +79,11 @@ export function Dashboard() {
       socket.onopen = () => { attempts = 0; setLiveStatus("live"); };
       socket.onmessage = (message) => {
         const payload = JSON.parse(message.data) as { type?: string };
-        if (payload.type === "telemetry.created") refreshProjectDetails(selectedProjectId).catch((error: Error) => setNotice(error.message));
+        if (payload.type === "telemetry.created") {
+          refreshProjectDetails(selectedProjectId).catch((error: Error) => setNotice(error.message));
+          if (metricsRefreshTimer) clearTimeout(metricsRefreshTimer);
+          metricsRefreshTimer = setTimeout(() => setMetricsRefreshKey((current) => current + 1), 500);
+        }
       };
       socket.onclose = () => {
         if (closedByEffect) return;
@@ -70,7 +95,7 @@ export function Dashboard() {
     };
 
     connect();
-    return () => { closedByEffect = true; if (reconnectTimer) clearTimeout(reconnectTimer); socket?.close(); };
+    return () => { closedByEffect = true; if (reconnectTimer) clearTimeout(reconnectTimer); if (metricsRefreshTimer) clearTimeout(metricsRefreshTimer); socket?.close(); };
   }, [selectedProjectId]);
 
   async function handleProjectSubmit(event: FormEvent<HTMLFormElement>) {
@@ -125,6 +150,13 @@ export function Dashboard() {
           <article className="summary-card"><p>Error Rate</p><strong>{summary?.error_rate ?? 0}%</strong></article>
         </div>
       </section>
+      <section className="metrics-controls" aria-label="Historical metrics time range">
+        <div><h2>Telemetry trends</h2><p className="muted">Historical buckets are calculated from PostgreSQL.</p></div>
+        <div className="range-selector" role="group" aria-label="Select historical metrics time range">
+          {(["15m", "1h", "24h", "7d"] as MetricsTimeRange[]).map((range) => <button className={metricsRange === range ? "selected" : "secondary"} type="button" aria-pressed={metricsRange === range} key={range} onClick={() => setMetricsRange(range)}>{{ "15m": "Last 15 Minutes", "1h": "Last Hour", "24h": "Last 24 Hours", "7d": "Last 7 Days" }[range]}</button>)}
+        </div>
+      </section>
+      <MetricsCharts metrics={metrics} loading={metricsLoading} error={metricsError} />
       <section className="workspace" aria-label="Project setup">
         <div className="panel"><div className="section-heading"><h2>Monitored Projects</h2><p>{projects.length} total</p></div>
           <form className="form" onSubmit={handleProjectSubmit}><input required value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Project name" aria-label="Project name" /><input value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="Description (optional)" aria-label="Project description" /><button type="submit">Create project</button></form>

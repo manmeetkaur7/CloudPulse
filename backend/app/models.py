@@ -10,6 +10,13 @@ class EventType(str, Enum):
     ERROR = "error"
 
 
+class MetricsTimeRange(str, Enum):
+    FIFTEEN_MINUTES = "15m"
+    ONE_HOUR = "1h"
+    TWENTY_FOUR_HOURS = "24h"
+    SEVEN_DAYS = "7d"
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
@@ -88,6 +95,21 @@ class ProjectSummary(BaseModel):
     average_latency_ms: float
     error_rate: float
     status: str
+
+
+class MetricsBucket(BaseModel):
+    timestamp: datetime
+    request_count: int
+    error_count: int
+    error_rate: float
+    average_latency_ms: float
+    p95_latency_ms: float
+
+
+class ProjectMetrics(BaseModel):
+    time_range: MetricsTimeRange
+    bucket_width_seconds: int
+    buckets: list[MetricsBucket]
 
 
 class TelemetryBatchCreate(BaseModel):

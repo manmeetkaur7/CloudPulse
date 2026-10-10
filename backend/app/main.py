@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.metrics import router as metrics_router
 from app.api.projects import router as projects_router
 from app.api.realtime import router as realtime_router
 from app.api.telemetry import ingestion_router, router as telemetry_router
@@ -36,6 +37,7 @@ def create_app(session_factory: sessionmaker[Session] | None = None, redis_servi
         allow_headers=["*"],
     )
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(projects_router)
     app.include_router(telemetry_router)
     app.include_router(ingestion_router)
